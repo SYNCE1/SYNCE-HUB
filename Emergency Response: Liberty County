@@ -1,4 +1,4 @@
--- Emergency Response: Liberty County: ESP + Aimbot (Luau) -- test edilmedi
+-- Emergency Response: Liberty County: ESP + Aimbot (Luau) -- untested
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -12,11 +12,11 @@ local Camera = Workspace.CurrentCamera
 local Config = {
 	Enabled = true, Box = true, Name = true, Health = true, Distance = true, Team = true,
 	MaxDistance = 800, YOffset = 0,
-	Aim = true, AimActive = false, HoldRMB = true, AimPart = 1, -- 1 Head, 2 Torso, 3 Karışık
+	Aim = true, AimActive = false, HoldRMB = true, AimPart = 1, -- 1 Head, 2 Torso, 3 Mixed
 	FOV = 100, Smooth = 0.12, VisibleOnly = true, TeamCheck = false, ShowFOV = true,
 	AimMax = 600,
 }
-local AIM_NAMES = { "Kafa", "Gövde", "Karışık" }
+local AIM_NAMES = { "Head", "Torso", "Mixed" }
 
 local HAS_DRAWING = (typeof(Drawing) == "table" or typeof(Drawing) == "userdata") and Drawing.new ~= nil
 local connections, entities, unloaded = {}, {}, false
@@ -63,14 +63,6 @@ end
 
 local function isTeammate(plr)
 	return LP.Team ~= nil and plr.Team == LP.Team
-end
-
-local function pickPart(char)
-	local head = char:FindFirstChild("Head")
-	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-	if Config.AimPart == 1 then return head end
-	if Config.AimPart == 2 then return torso end
-	return head or torso -- karışık: ikisinden ekrana yakın olanı döngüde seçilir
 end
 
 local function makeEntity()
@@ -156,7 +148,7 @@ local function onRender()
 					hideEntity(e)
 				end
 
-				-- aimbot adayı
+				-- aimbot candidate
 				if Config.Aim and dist <= Config.AimMax and not (Config.TeamCheck and isTeammate(plr)) then
 					local candidates = {}
 					local head = char:FindFirstChild("Head")
@@ -194,7 +186,7 @@ end
 RunService:BindToRenderStep("ERLCEspAim", Enum.RenderPriority.Camera.Value + 1, onRender)
 table.insert(connections, Players.PlayerRemoving:Connect(removeEntity))
 
------------------------------------------------------------------ menü
+----------------------------------------------------------------- menu
 local gui = Instance.new("ScreenGui")
 gui.Name = "ERLCMenu"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.DisplayOrder = 999
 do
@@ -279,7 +271,7 @@ local function toggle(text, key)
 	b.Parent = list
 	corner(b, 8)
 	local function refresh()
-		b.Text = "  " .. text .. ":  " .. (Config[key] and "AÇIK" or "KAPALI")
+		b.Text = "  " .. text .. ":  " .. (Config[key] and "ON" or "OFF")
 		b.BackgroundColor3 = Config[key] and Color3.fromRGB(40, 80, 160) or PANEL
 	end
 	refresh()
@@ -366,31 +358,31 @@ end))
 
 section("ESP")
 toggle("ESP", "Enabled")
-toggle("Kutu", "Box")
-toggle("İsim", "Name")
-toggle("Takım (renk + ad)", "Team")
-toggle("Can", "Health")
-toggle("Mesafe", "Distance")
-slider("Mesafe sınırı (stud)", "MaxDistance", 50, 3000, 0)
-slider("Kutu kaydırma (piksel)", "YOffset", -60, 60, 0)
+toggle("Box", "Box")
+toggle("Name", "Name")
+toggle("Team (color + name)", "Team")
+toggle("Health", "Health")
+toggle("Distance", "Distance")
+slider("Max distance (studs)", "MaxDistance", 50, 3000, 0)
+slider("Box offset (pixels)", "YOffset", -60, 60, 0)
 
 section("AIMBOT")
 toggle("Aimbot", "Aim")
-toggle("Aim aktif (basılı tutmadan)", "AimActive")
-toggle("Sağ tık basılıyken (PC)", "HoldRMB")
-cycle("Hedef", "AimPart", AIM_NAMES)
-toggle("Sadece görünürse", "VisibleOnly")
-toggle("Takım kontrolü (kendi takımını atla)", "TeamCheck")
-toggle("FOV dairesi", "ShowFOV")
-slider("FOV (piksel)", "FOV", 20, 400, 0)
-slider("Yumuşatma (düşük = yavaş)", "Smooth", 0.02, 1, 2)
-slider("Aim mesafe (stud)", "AimMax", 50, 3000, 0)
+toggle("Aim always on (no hold)", "AimActive")
+toggle("Hold right click (PC)", "HoldRMB")
+cycle("Target", "AimPart", AIM_NAMES)
+toggle("Visible only", "VisibleOnly")
+toggle("Team check (skip own team)", "TeamCheck")
+toggle("FOV circle", "ShowFOV")
+slider("FOV (pixels)", "FOV", 20, 400, 0)
+slider("Smoothing (low = slow)", "Smooth", 0.02, 1, 2)
+slider("Aim distance (studs)", "AimMax", 50, 3000, 0)
 
 local unloadBtn = Instance.new("TextButton")
 unloadBtn.Size = UDim2.new(1, 0, 0, 28)
 unloadBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
 unloadBtn.BorderSizePixel = 0
-unloadBtn.Text = "Scripti kapat"
+unloadBtn.Text = "Unload script"
 unloadBtn.Font = Enum.Font.GothamBold
 unloadBtn.TextSize = 13
 unloadBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -401,7 +393,7 @@ if not HAS_DRAWING then
 	local w = Instance.new("TextLabel")
 	w.Size = UDim2.new(1, 0, 0, 18)
 	w.BackgroundTransparency = 1
-	w.Text = "UYARI: Drawing API yok, ESP/FOV çizilmez"
+	w.Text = "WARNING: no Drawing API, ESP/FOV won't render"
 	w.TextColor3 = Color3.fromRGB(255, 120, 120)
 	w.Font = Enum.Font.GothamBold
 	w.TextSize = 12
