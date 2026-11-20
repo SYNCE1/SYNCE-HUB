@@ -1,0 +1,454 @@
+-- Emergency Response: Liberty County: ESP + Aimbot (Luau) -- test edilmedi
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+if getgenv and getgenv().__ERLC_UNLOAD then pcall(getgenv().__ERLC_UNLOAD) end
+
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+local Config = {
+	Enabled = true, Box = true, Name = true, Health = true, Distance = true, Team = true,
+	MaxDistance = 800, YOffset = 0,
+	Aim = true, AimActive = false, HoldRMB = true, AimPart = 1, -- 1 Head, 2 Torso, 3 Karışık
+	FOV = 100, Smooth = 0.12, VisibleOnly = true, TeamCheck = false, ShowFOV = true,
+	AimMax = 600,
+}
+local AIM_NAMES = { "Kafa", "Gövde", "Karışık" }
+
+local HAS_DRAWING = (typeof(Drawing) == "table" or typeof(Drawing) == "userdata") and Drawing.new ~= nil
+local connections, entities, unloaded = {}, {}, false
+
+local function newDraw(kind, props)
+	local o = Drawing.new(kind)
+	for k, v in pairs(props) do o[k] = v end
+	return o
+end
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.RespectCanCollide = true
+
+local function accumulate(cf, size, b)
+	local h = size / 2
+	for sx = -1, 1, 2 do
+		for sy = -1, 1, 2 do
+			for sz = -1, 1, 2 do
+				local p = Camera:WorldToViewportPoint((cf * CFrame.new(h.X * sx, h.Y * sy, h.Z * sz)).Position)
+				if p.Z <= 0 then return false end
+				if p.X < b[1] then b[1] = p.X end
+				if p.Y < b[2] then b[2] = p.Y end
+				if p.X > b[3] then b[3] = p.X end
+				if p.Y > b[4] then b[4] = p.Y end
+			end
+		end
+	end
+	return true
+end
+
+local function bodyBox(char)
+	local b = { math.huge, math.huge, -math.huge, -math.huge }
+	local n = 0
+	for _, p in ipairs(char:GetChildren()) do
+		if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+			if not accumulate(p.CFrame, p.Size, b) then return nil end
+			n += 1
+		end
+	end
+	if n == 0 or b[1] ~= b[1] or b[3] ~= b[3] then return nil end
+	return b[1], b[2], b[3], b[4]
+end
+
+local function isTeammate(plr)
+	return LP.Team ~= nil and plr.Team == LP.Team
+end
+
+local function pickPart(char)
+	local head = char:FindFirstChild("Head")
+	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+	if Config.AimPart == 1 then return head end
+	if Config.AimPart == 2 then return torso end
+	return head or torso -- karışık: ikisinden ekrana yakın olanı döngüde seçilir
+end
+
+local function makeEntity()
+	return {
+		Box = newDraw("Square", { Thickness = 1.5, Filled = false, Visible = false }),
+		Name = newDraw("Text", { Size = 14, Center = true, Outline = true, Visible = false }),
+		HP = newDraw("Line", { Thickness = 2, Visible = false }),
+	}
+end
+local function hideEntity(e) e.Box.Visible = false; e.Name.Visible = false; e.HP.Visible = false end
+local function removeEntity(plr)
+	local e = entities[plr]
+	if not e then return end
+	pcall(function() e.Box:Remove(); e.Name:Remove(); e.HP:Remove() end)
+	entities[plr] = nil
+end
+
+local fovCircle
+if HAS_DRAWING then
+	fovCircle = newDraw("Circle", { Thickness = 1, NumSides = 64, Filled = false, Visible = false, Color = Color3.new(1, 1, 1) })
+end
+
+local function aimHeld()
+	if Config.AimActive then return true end
+	return Config.HoldRMB and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
+local function onRender()
+	if unloaded then return end
+	Camera = Workspace.CurrentCamera
+	if not Camera or not HAS_DRAWING then return end
+	local camPos = Camera.CFrame.Position
+	local center = UIS.MouseEnabled and UIS:GetMouseLocation() or (Camera.ViewportSize / 2)
+	if UIS.MouseBehavior == Enum.MouseBehavior.LockCenter then center = Camera.ViewportSize / 2 end
+
+	fovCircle.Visible = Config.Aim and Config.ShowFOV
+	fovCircle.Position = center
+	fovCircle.Radius = Config.FOV
+
+	local bestPos, bestDist = nil, math.huge
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LP then
+			local e = entities[plr]
+			if not e then e = makeEntity(); entities[plr] = e end
+			local char = plr.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+			if not (char and hum and root) or hum.Health <= 0 then
+				hideEntity(e)
+			else
+				local dist = (root.Position - camPos).Magnitude
+
+				-- ESP
+				if Config.Enabled and dist <= Config.MaxDistance then
+					local x1, y1, x2, y2 = bodyBox(char)
+					if x1 then
+						local yo = Config.YOffset
+						y1 += yo; y2 += yo
+						local col = (Config.Team and plr.Team and plr.TeamColor.Color) or Color3.new(1, 1, 1)
+						e.Box.Visible = Config.Box
+						e.Box.Position = Vector2.new(x1, y1)
+						e.Box.Size = Vector2.new(x2 - x1, y2 - y1)
+						e.Box.Color = col
+						local label = {}
+						if Config.Name then table.insert(label, plr.DisplayName) end
+						if Config.Team and plr.Team then table.insert(label, "(" .. plr.Team.Name .. ")") end
+						if Config.Health then table.insert(label, string.format("%d HP", math.floor(hum.Health))) end
+						if Config.Distance then table.insert(label, string.format("[%d st]", math.floor(dist))) end
+						e.Name.Visible = #label > 0
+						e.Name.Text = table.concat(label, " ")
+						e.Name.Position = Vector2.new((x1 + x2) / 2, y1 - 16)
+						e.Name.Color = col
+						local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+						e.HP.Visible = Config.Health
+						e.HP.From = Vector2.new(x1 - 4, y2)
+						e.HP.To = Vector2.new(x1 - 4, y2 - (y2 - y1) * frac)
+						e.HP.Color = Color3.fromRGB(255 * (1 - frac), 255 * frac, 0)
+					else
+						hideEntity(e)
+					end
+				else
+					hideEntity(e)
+				end
+
+				-- aimbot adayı
+				if Config.Aim and dist <= Config.AimMax and not (Config.TeamCheck and isTeammate(plr)) then
+					local candidates = {}
+					local head = char:FindFirstChild("Head")
+					local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+					if Config.AimPart == 1 then candidates = { head }
+					elseif Config.AimPart == 2 then candidates = { torso }
+					else candidates = { head, torso } end
+					for _, part in ipairs(candidates) do
+						if part and part:IsA("BasePart") then
+							local sp, on = Camera:WorldToViewportPoint(part.Position)
+							if on and sp.Z > 0 then
+								local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+								if d <= Config.FOV and d < bestDist then
+									local visible = true
+									if Config.VisibleOnly then
+										rayParams.FilterDescendantsInstances = { LP.Character, char }
+										visible = Workspace:Raycast(camPos, part.Position - camPos, rayParams) == nil
+									end
+									if visible then bestDist, bestPos = d, part.Position end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if bestPos and Config.Aim and aimHeld() then
+		local k = math.clamp(Config.Smooth, 0.02, 1)
+		Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(camPos, bestPos), k)
+	end
+end
+
+RunService:BindToRenderStep("ERLCEspAim", Enum.RenderPriority.Camera.Value + 1, onRender)
+table.insert(connections, Players.PlayerRemoving:Connect(removeEntity))
+
+----------------------------------------------------------------- menü
+local gui = Instance.new("ScreenGui")
+gui.Name = "ERLCMenu"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.DisplayOrder = 999
+do
+	local ok, h = pcall(function() return gethui and gethui() end)
+	if ok and h then gui.Parent = h
+	else
+		local ok2 = pcall(function() gui.Parent = game:GetService("CoreGui") end)
+		if not ok2 or not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+	end
+end
+
+local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = p end
+local BG, PANEL, ACCENT = Color3.fromRGB(22, 24, 32), Color3.fromRGB(34, 37, 48), Color3.fromRGB(70, 140, 255)
+
+local mark = Instance.new("TextLabel")
+mark.AnchorPoint = Vector2.new(0.5, 0)
+mark.Position = UDim2.new(0.5, 0, 0, 4)
+mark.Size = UDim2.fromOffset(300, 26)
+mark.BackgroundTransparency = 1
+mark.Text = "MODDED BY SYNCE"
+mark.Font = Enum.Font.GothamBlack
+mark.TextSize = 18
+mark.Parent = gui
+do local s = Instance.new("UIStroke"); s.Thickness = 1.5; s.Color = Color3.new(0, 0, 0); s.Parent = mark end
+table.insert(connections, RunService.Heartbeat:Connect(function()
+	mark.TextColor3 = Color3.fromHSV((os.clock() * 0.2) % 1, 0.7, 1)
+end))
+
+local window = Instance.new("Frame")
+window.Size = UDim2.fromOffset(250, 380)
+window.Position = UDim2.new(0, 20, 0.5, -190)
+window.BackgroundColor3 = BG
+window.BorderSizePixel = 0
+window.Parent = gui
+corner(window, 12)
+do local s = Instance.new("UIStroke"); s.Color = ACCENT; s.Parent = window end
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 32)
+title.BackgroundColor3 = PANEL
+title.BorderSizePixel = 0
+title.Text = "  ER:LC ESP / Aim  |  SYNCE"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = window
+corner(title, 12)
+
+local list = Instance.new("ScrollingFrame")
+list.Position = UDim2.fromOffset(8, 40)
+list.Size = UDim2.new(1, -16, 1, -48)
+list.BackgroundTransparency = 1
+list.BorderSizePixel = 0
+list.ScrollBarThickness = 3
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+list.CanvasSize = UDim2.new()
+list.Parent = window
+do local l = Instance.new("UIListLayout"); l.Padding = UDim.new(0, 6); l.Parent = list end
+
+local function section(text)
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(1, 0, 0, 18)
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextColor3 = ACCENT
+	l.Font = Enum.Font.GothamBold
+	l.TextSize = 12
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.Parent = list
+end
+
+local function toggle(text, key)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 28)
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = false
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 13
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.TextXAlignment = Enum.TextXAlignment.Left
+	b.Parent = list
+	corner(b, 8)
+	local function refresh()
+		b.Text = "  " .. text .. ":  " .. (Config[key] and "AÇIK" or "KAPALI")
+		b.BackgroundColor3 = Config[key] and Color3.fromRGB(40, 80, 160) or PANEL
+	end
+	refresh()
+	b.Activated:Connect(function() Config[key] = not Config[key]; refresh() end)
+end
+
+local function cycle(text, key, names)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 28)
+	b.BackgroundColor3 = PANEL
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = false
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 13
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Parent = list
+	corner(b, 8)
+	local function refresh() b.Text = text .. ": " .. names[Config[key]] end
+	refresh()
+	b.Activated:Connect(function()
+		Config[key] = Config[key] % #names + 1
+		refresh()
+	end)
+end
+
+local activeSlider
+local function slider(text, key, min, max, decimals)
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 40)
+	f.BackgroundColor3 = PANEL
+	f.BorderSizePixel = 0
+	f.Parent = list
+	corner(f, 8)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -10, 0, 18)
+	lbl.Position = UDim2.fromOffset(8, 2)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.Gotham
+	lbl.TextSize = 12
+	lbl.TextColor3 = Color3.new(1, 1, 1)
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = f
+	local bar = Instance.new("Frame")
+	bar.Position = UDim2.new(0, 8, 0, 26)
+	bar.Size = UDim2.new(1, -16, 0, 6)
+	bar.BackgroundColor3 = BG
+	bar.BorderSizePixel = 0
+	bar.Parent = f
+	corner(bar, 3)
+	local fill = Instance.new("Frame")
+	fill.BackgroundColor3 = ACCENT
+	fill.BorderSizePixel = 0
+	fill.Parent = bar
+	corner(fill, 3)
+	local mult = 10 ^ (decimals or 0)
+	local function set(v)
+		v = math.clamp(math.floor(v * mult + 0.5) / mult, min, max)
+		Config[key] = v
+		fill.Size = UDim2.new((v - min) / (max - min), 0, 1, 0)
+		lbl.Text = text .. ": " .. tostring(v)
+	end
+	set(Config[key])
+	local function fromInput(x)
+		set(min + (max - min) * math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1))
+	end
+	f.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			activeSlider = fromInput
+			fromInput(i.Position.X)
+		end
+	end)
+end
+
+table.insert(connections, UIS.InputChanged:Connect(function(i)
+	if activeSlider and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+		activeSlider(i.Position.X)
+	end
+end))
+table.insert(connections, UIS.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		activeSlider = nil
+	end
+end))
+
+section("ESP")
+toggle("ESP", "Enabled")
+toggle("Kutu", "Box")
+toggle("İsim", "Name")
+toggle("Takım (renk + ad)", "Team")
+toggle("Can", "Health")
+toggle("Mesafe", "Distance")
+slider("Mesafe sınırı (stud)", "MaxDistance", 50, 3000, 0)
+slider("Kutu kaydırma (piksel)", "YOffset", -60, 60, 0)
+
+section("AIMBOT")
+toggle("Aimbot", "Aim")
+toggle("Aim aktif (basılı tutmadan)", "AimActive")
+toggle("Sağ tık basılıyken (PC)", "HoldRMB")
+cycle("Hedef", "AimPart", AIM_NAMES)
+toggle("Sadece görünürse", "VisibleOnly")
+toggle("Takım kontrolü (kendi takımını atla)", "TeamCheck")
+toggle("FOV dairesi", "ShowFOV")
+slider("FOV (piksel)", "FOV", 20, 400, 0)
+slider("Yumuşatma (düşük = yavaş)", "Smooth", 0.02, 1, 2)
+slider("Aim mesafe (stud)", "AimMax", 50, 3000, 0)
+
+local unloadBtn = Instance.new("TextButton")
+unloadBtn.Size = UDim2.new(1, 0, 0, 28)
+unloadBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+unloadBtn.BorderSizePixel = 0
+unloadBtn.Text = "Scripti kapat"
+unloadBtn.Font = Enum.Font.GothamBold
+unloadBtn.TextSize = 13
+unloadBtn.TextColor3 = Color3.new(1, 1, 1)
+unloadBtn.Parent = list
+corner(unloadBtn, 8)
+
+if not HAS_DRAWING then
+	local w = Instance.new("TextLabel")
+	w.Size = UDim2.new(1, 0, 0, 18)
+	w.BackgroundTransparency = 1
+	w.Text = "UYARI: Drawing API yok, ESP/FOV çizilmez"
+	w.TextColor3 = Color3.fromRGB(255, 120, 120)
+	w.Font = Enum.Font.GothamBold
+	w.TextSize = 12
+	w.Parent = list
+end
+
+do
+	local dragging, startPos, startInput
+	title.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, startPos, startInput = true, window.Position, i.Position
+		end
+	end)
+	table.insert(connections, UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - startInput
+			window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end))
+	table.insert(connections, UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end))
+end
+
+local orb = Instance.new("TextButton")
+orb.Size = UDim2.fromOffset(40, 40)
+orb.Position = UDim2.new(1, -50, 0, 70)
+orb.BackgroundColor3 = ACCENT
+orb.Text = "≡"
+orb.TextSize = 22
+orb.TextColor3 = Color3.new(1, 1, 1)
+orb.Font = Enum.Font.GothamBold
+orb.Parent = gui
+corner(orb, 20)
+orb.Activated:Connect(function() window.Visible = not window.Visible end)
+table.insert(connections, UIS.InputBegan:Connect(function(i, gp)
+	if not gp and i.KeyCode == Enum.KeyCode.RightShift then window.Visible = not window.Visible end
+end))
+
+local function unload()
+	if unloaded then return end
+	unloaded = true
+	pcall(function() RunService:UnbindFromRenderStep("ERLCEspAim") end)
+	for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+	for plr in pairs(entities) do removeEntity(plr) end
+	if fovCircle then pcall(function() fovCircle:Remove() end) end
+	gui:Destroy()
+end
+unloadBtn.Activated:Connect(unload)
+if getgenv then getgenv().__ERLC_UNLOAD = unload end
